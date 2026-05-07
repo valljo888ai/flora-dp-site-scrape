@@ -42,7 +42,8 @@ CRITICAL_FIELDS = [
     "product_url", "sku", "name", "wholesale_price", "in_stock", "image_1",
 ]
 
-KNOWN_STOCK_STATUSES = {"In stock", "Out of stock", "On backorder", ""}
+KNOWN_STOCK_STATUSES = {"In stock", "Out of stock", "On backorder", "",
+                        "In Stock", "Out of Stock"}  # site renders title-case
 
 
 def canonical(href: str) -> str:
@@ -104,10 +105,16 @@ def check_critical_fields(all_rows: list[dict]) -> list[str]:
 def check_integrity(all_rows: list[dict]) -> list[str]:
     issues = []
 
-    url_counts = Counter(r["product_url"] for r in all_rows)
-    dups = [u for u, n in url_counts.items() if n > 1]
-    if dups:
-        issues.append(f"{len(dups)} duplicate product_url(s) across CSVs")
+    # Check duplicates within each catalog's rows only — cross-catalog overlap is
+    # expected because the site lists some products under multiple categories.
+    by_catalog: dict[str, list[dict]] = {}
+    for r in all_rows:
+        by_catalog.setdefault(r.get("_catalog", "?"), []).append(r)
+    for cat, rows in by_catalog.items():
+        url_counts = Counter(r["product_url"] for r in rows)
+        dups = [u for u, n in url_counts.items() if n > 1]
+        if dups:
+            issues.append(f"{len(dups)} duplicate product_url(s) within '{cat}' catalog")
 
     bad_status = [r for r in all_rows if r.get("in_stock", "") not in KNOWN_STOCK_STATUSES]
     if bad_status:
