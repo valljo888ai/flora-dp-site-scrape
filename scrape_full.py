@@ -82,3 +82,68 @@ def parse_product_id(url: str) -> str:
     """
     m = re.search(r"/product/([^/]+)/?$", url)
     return m.group(1) if m else url.rstrip("/").rsplit("/", 1)[-1]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 1 — Load More crawl
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def phase1_crawl(page, category_url: str, test_mode: bool = False) -> list[str]:
+    """
+    Navigate to category, click 'Load More' until exhausted, return
+    deduplicated canonical product URLs.
+
+    Raises SessionExpiredError if the page redirects to login.
+    """
+    full_url = BASE_URL + category_url
+    await page.goto(full_url, wait_until="domcontentloaded", timeout=30_000)
+
+    if "my-account" in page.url or "login" in page.url:
+        raise SessionExpiredError(
+            "Session expired — re-run login.bat to refresh your auth.json"
+        )
+
+    urls: set[str] = set()
+
+    async def collect_current() -> int:
+        """Collect all product links currently visible; return count of new ones added."""
+        links = await page.eval_on_selector_all(
+            "a.woocommerce-LoopProduct-link",
+            "els => els.map(el => el.href)"
+        )
+        before = len(urls)
+        for href in links:
+            urls.add(canonical_url(href))
+        return len(urls) - before
+
+    # Initial collection
+    added = await collect_current()
+    print(f"  Initial load: {len(urls)} products")
+
+    if test_mode:
+        return list(urls)
+
+    # Click Load More until it disappears or adds nothing new
+    rounds = 0
+    while True:
+        btn = await page.query_selector("button.load-more-button-new")
+        if btn is None:
+            break
+        is_visible = await btn.is_visible()
+        if not is_visible:
+            break
+
+        await btn.click()
+        # Wait for new products to render
+        await page.wait_for_load_state("networkidle", timeout=15_000)
+
+        added = await collect_current()
+        rounds += 1
+        print(f"  Load More #{rounds}: +{added} new  ({len(urls)} total)")
+
+        if added == 0:
+            # Button still present but nothing new — stop to avoid infinite loop
+            print("  No new products after click — stopping pagination.")
+            break
+
+    return list(urls)
