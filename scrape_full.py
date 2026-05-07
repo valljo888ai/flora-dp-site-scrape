@@ -147,3 +147,194 @@ async def phase1_crawl(page, category_url: str, test_mode: bool = False) -> list
             break
 
     return list(urls)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 2 — Product scrape
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def scrape_product(context, url: str, category_label: str, scraped_at: str) -> dict:
+    """
+    Visit a single product page and extract all 26 fields.
+    Returns a dict keyed by FIELDNAMES.
+    On any error, returns a partial row with scrape_status='failed'.
+    """
+    row = {f: "" for f in FIELDNAMES}
+    row["product_url"]   = url
+    row["category"]      = category_label
+    row["scraped_at"]    = scraped_at
+    row["product_id"]    = parse_product_id(url)
+    row["scrape_status"] = "ok"
+
+    page = await context.new_page()
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+
+        if "my-account" in page.url or "login" in page.url:
+            raise SessionExpiredError("Session expired mid-scrape")
+
+        # Render gate — wait for product title to confirm full page load
+        await page.wait_for_selector("h1", timeout=30_000)
+
+        async def text(sel: str) -> str:
+            try:
+                return (await page.eval_on_selector(sel, "el => el.textContent.trim()")) or ""
+            except Exception:
+                return ""
+
+        async def attr(sel: str, attribute: str) -> str:
+            try:
+                return (await page.eval_on_selector(sel, f"el => el.getAttribute('{attribute}')")) or ""
+            except Exception:
+                return ""
+
+        # Canonical URL
+        row["product_url"] = await attr("link[rel='canonical']", "href") or url
+
+        # Identity
+        row["sku"]  = await text("p.product-sku")
+        # Strip non-digit chars to match webscraper.io regex [0-9]+
+        sku_digits = re.sub(r"\D", "", row["sku"])
+        if sku_digits:
+            row["sku"] = sku_digits
+        row["name"] = await text("h1")
+
+        # Stock
+        row["in_stock"] = await text("p.stock-status")
+
+        # Content
+        row["breadcrumb"]         = await text(".woocommerce-breadcrumb")
+        row["short_description"]  = await text(".woocommerce-product-details__short-description")
+        row["description"]        = await text(".single_description_acc div.open")
+
+        # Pricing
+        row["sale_price"]           = await text(".mainsale-price .sale-price .woocommerce-Price-amount bdi")
+        row["regular_price"]        = await text(".mainsale-price .regular-price .woocommerce-Price-amount bdi")
+        row["retail_price"]         = await text("p.price.no-sale .woocommerce-Price-amount bdi")
+        row["wholesale_price"]      = await text(".price_custom .woocommerce-Price-amount bdi")
+        row["save_amount"]          = await text(".saveprice .woocommerce-Price-amount bdi")
+        row["variable_price_range"] = await text(".variations_form ~ * .price, .single_variation_wrap .price")
+
+        # Ratings
+        rating_raw = await text(".star-rating")
+        rating_m   = re.search(r"[0-9]+\.[0-9]+", rating_raw)
+        row["rating"] = rating_m.group(0) if rating_m else ""
+
+        review_raw = await text(".woocommerce-review-link")
+        review_m   = re.search(r"[0-9]+", review_raw)
+        row["review_count"] = review_m.group(0) if review_m else ""
+
+        # SEO
+        row["seo_title"]       = await text("title")
+        row["meta_description"] = await page.get_attribute('meta[property="og:description"]', "content") or ""
+
+        # Images — collect up to 5 data-large_image attributes
+        image_els = await page.query_selector_all(".wpgs-for img[data-large_image]")
+        for i, img_el in enumerate(image_els[:5], start=1):
+            val = await img_el.get_attribute("data-large_image") or ""
+            row[f"image_{i}"] = val
+
+    except SessionExpiredError:
+        await page.close()
+        raise
+    except PlaywrightTimeoutError:
+        print(f"  WARN timeout: {url}")
+        row["scrape_status"] = "failed"
+    except Exception as exc:
+        print(f"  WARN {url}: {exc}")
+        row["scrape_status"] = "failed"
+    finally:
+        try:
+            await page.close()
+        except Exception:
+            pass
+
+    return row
+
+
+async def phase2_scrape(
+    context,
+    urls: list[str],
+    category_label: str,
+    concurrency: int = 3,
+) -> list[dict]:
+    """
+    Scrape all product URLs concurrently using a semaphore.
+    Returns list of row dicts in completion order.
+    Auto-retries any failed rows once.
+    """
+    scraped_at = datetime.now(timezone.utc).isoformat()
+    semaphore  = asyncio.Semaphore(concurrency)
+    total      = len(urls)
+    completed  = 0
+
+    async def fetch_one(url: str) -> dict:
+        nonlocal completed
+        async with semaphore:
+            row = await scrape_product(context, url, category_label, scraped_at)
+        completed += 1
+        if completed % 25 == 0 or completed == total:
+            print(f"  [{completed}/{total}] products scraped")
+        return row
+
+    rows = list(await asyncio.gather(*[fetch_one(u) for u in urls]))
+
+    # Retry failed rows once
+    failed_urls = [r["product_url"] for r in rows if r["scrape_status"] == "failed"]
+    if failed_urls:
+        print(f"  Retrying {len(failed_urls)} failed products...")
+        retry_rows = list(await asyncio.gather(*[fetch_one(u) for u in failed_urls]))
+        retry_map  = {r["product_url"]: r for r in retry_rows}
+        rows = [retry_map.get(r["product_url"], r) if r["scrape_status"] == "failed" else r for r in rows]
+
+    return rows
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 3 — CSV assembly, validation, summary
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def phase3_write_csv(rows: list[dict], output_path: pathlib.Path) -> None:
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+async def validate(page, category_url: str, scraped_urls: list[str]) -> bool:
+    """
+    Re-crawl the category and assert every URL found appears in scraped_urls.
+    """
+    print("\n-- Validation --")
+    expected = await phase1_crawl(page, category_url, test_mode=False)
+    scraped  = set(scraped_urls)
+    missing  = [u for u in expected if u not in scraped]
+
+    print(f"  Expected: {len(expected)}  Scraped: {len(scraped)}  Missing: {len(missing)}")
+    if missing:
+        print("  Missing URLs:")
+        for u in sorted(missing):
+            print(f"    {u}")
+
+    if len(expected) == 0 and len(scraped) > 0:
+        print("  WARNING: re-crawl returned 0 URLs — possible block during validation")
+        return False
+
+    ok = len(missing) == 0
+    print(f"  Coverage OK: {ok}")
+    return ok
+
+
+def print_summary(rows: list[dict], output_path: pathlib.Path, elapsed: float) -> None:
+    stock_counter = Counter()
+    for row in rows:
+        status = row.get("in_stock", "") or "Unknown"
+        stock_counter[status] += 1
+
+    print(f"\n{'='*55}")
+    print(f"  {len(rows)} products written to {output_path.name}")
+    print(f"  Total time: {elapsed:.1f}s")
+    print(f"\n  Stock breakdown:")
+    for status, n in sorted(stock_counter.items()):
+        print(f"    {status}: {n}")
+    print(f"{'='*55}")
