@@ -51,36 +51,24 @@ def canonical(href: str) -> str:
 
 
 async def crawl_category(page, cat_url: str) -> set[str]:
-    """Re-crawl a category using Load More until exhausted. Returns set of canonical URLs."""
-    full_url = BASE_URL + cat_url
-    await page.goto(full_url, wait_until="domcontentloaded", timeout=30_000)
+    """Re-crawl a category using /page/999/ redirect strategy. Returns set of canonical URLs.
+
+    DP's category pages are cumulative: /page/N/ shows all products up to page N.
+    /page/999/ redirects to the last real page, which contains every product in one shot.
+    The Load More button uses Nitro CDN JS deferral (nitro-offscreen) and is unreliable
+    in headless Playwright — the /page/999/ approach is the reliable alternative.
+    """
+    base = BASE_URL + cat_url.rstrip("/")
+    target = base + "/page/999/"
+    await page.goto(target, wait_until="networkidle", timeout=30_000)
     if "my-account" in page.url or "login" in page.url:
         raise RuntimeError("Session expired during verification — re-run save_session.py")
 
-    urls: set[str] = set()
-
-    async def collect():
-        links = await page.eval_on_selector_all(
-            "a.woocommerce-LoopProduct-link",
-            "els => els.map(el => el.href)"
-        )
-        for href in links:
-            urls.add(canonical(href))
-
-    await collect()
-
-    while True:
-        btn = await page.query_selector("button.load-more-button-new")
-        if btn is None or not await btn.is_visible():
-            break
-        before = len(urls)
-        await btn.click()
-        await page.wait_for_load_state("networkidle", timeout=15_000)
-        await collect()
-        if len(urls) == before:
-            break
-
-    return urls
+    links = await page.eval_on_selector_all(
+        "a.woocommerce-LoopProduct-link",
+        "els => els.map(el => el.href)"
+    )
+    return {canonical(href) for href in links}
 
 
 def load_csv(catalog_key: str) -> list[dict] | None:

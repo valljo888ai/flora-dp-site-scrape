@@ -85,68 +85,38 @@ def parse_product_id(url: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Phase 1 — Load More crawl
+# Phase 1 — Category crawl
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def phase1_crawl(page, category_url: str, test_mode: bool = False) -> list[str]:
     """
-    Navigate to category, click 'Load More' until exhausted, return
-    deduplicated canonical product URLs.
+    Collect all product URLs for a category.
 
-    Raises SessionExpiredError if the page redirects to login.
+    DP's category pages are cumulative: /page/N/ shows all products up to page N.
+    Navigating to /page/999/ causes WooCommerce to redirect to the last real page,
+    which contains every product in one shot.
+
+    In test_mode, loads only the first page (~20 products).
+
+    Raises SessionExpiredError if redirected to login.
     """
-    full_url = BASE_URL + category_url
-    await page.goto(full_url, wait_until="domcontentloaded", timeout=30_000)
+    base = BASE_URL + category_url.rstrip("/")
+    target = base if test_mode else base + "/page/999/"
+
+    await page.goto(target, wait_until="networkidle", timeout=30_000)
 
     if "my-account" in page.url or "login" in page.url:
         raise SessionExpiredError(
             "Session expired — re-run login.bat to refresh your auth.json"
         )
 
-    urls: set[str] = set()
-
-    async def collect_current() -> int:
-        """Collect all product links currently visible; return count of new ones added."""
-        links = await page.eval_on_selector_all(
-            "a.woocommerce-LoopProduct-link",
-            "els => els.map(el => el.href)"
-        )
-        before = len(urls)
-        for href in links:
-            urls.add(canonical_url(href))
-        return len(urls) - before
-
-    # Initial collection
-    added = await collect_current()
-    print(f"  Initial load: {len(urls)} products")
-
-    if test_mode:
-        return list(urls)
-
-    # Click Load More until it disappears or adds nothing new
-    rounds = 0
-    while True:
-        btn = await page.query_selector("button.load-more-button-new")
-        if btn is None:
-            break
-        is_visible = await btn.is_visible()
-        if not is_visible:
-            break
-
-        await btn.click()
-        # Wait for new products to render
-        await page.wait_for_load_state("networkidle", timeout=15_000)
-
-        added = await collect_current()
-        rounds += 1
-        print(f"  Load More #{rounds}: +{added} new  ({len(urls)} total)")
-
-        if added == 0:
-            # Button still present but nothing new — stop to avoid infinite loop
-            print("  No new products after click — stopping pagination.")
-            break
-
-    return list(urls)
+    links = await page.eval_on_selector_all(
+        "a.woocommerce-LoopProduct-link",
+        "els => els.map(el => el.href)"
+    )
+    urls = list(dict.fromkeys(canonical_url(h) for h in links))  # deduplicate, preserve order
+    print(f"  {'Test load' if test_mode else 'Full load'}: {len(urls)} products (landed on {page.url.split('designerplants.com.au')[-1]})")
+    return urls
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
