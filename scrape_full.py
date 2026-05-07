@@ -338,3 +338,127 @@ def print_summary(rows: list[dict], output_path: pathlib.Path, elapsed: float) -
     for status, n in sorted(stock_counter.items()):
         print(f"    {status}: {n}")
     print(f"{'='*55}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Per-catalog runner
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> None:
+    label        = catalog_config["label"]
+    category_url = catalog_config["category_url"]
+    output_csv   = catalog_config["output"]
+
+    print(f"\n{'#'*60}")
+    print(f"# CATALOG : {label}")
+    print(f"# Output  : {output_csv.name}")
+    print(f"{'#'*60}")
+
+    t_start = time.time()
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=args.headless)
+        context = await browser.new_context(
+            storage_state=str(AUTH_FILE),
+            viewport={"width": 1280, "height": 800},
+            user_agent=USER_AGENT,
+        )
+        nav_page = await context.new_page()
+
+        # ── Phase 1 ───────────────────────────────────────────────────────────
+        print(f"\n=== Phase 1: Category crawl (Load More) ===")
+        t1 = time.time()
+        try:
+            urls = await phase1_crawl(nav_page, category_url, test_mode=args.test)
+        except SessionExpiredError as e:
+            print(f"\nERROR: {e}")
+            await browser.close()
+            sys.exit(1)
+        print(f"Phase 1 done in {time.time()-t1:.1f}s  —  {len(urls)} products")
+
+        # ── Phase 2 ───────────────────────────────────────────────────────────
+        print(f"\n=== Phase 2: Product scrape ({args.concurrency} concurrent pages) ===")
+        t2 = time.time()
+        try:
+            rows = await phase2_scrape(context, urls, label, concurrency=args.concurrency)
+        except SessionExpiredError as e:
+            print(f"\nERROR: {e}")
+            print("Session expired mid-scrape — re-run login.bat then re-run this catalog.")
+            await browser.close()
+            sys.exit(1)
+        print(f"Phase 2 done in {time.time()-t2:.1f}s")
+
+        # ── Phase 3 ───────────────────────────────────────────────────────────
+        print(f"\n=== Phase 3: Assembling CSV ===")
+        phase3_write_csv(rows, output_csv)
+
+        # ── Validation ────────────────────────────────────────────────────────
+        scraped_urls = [r["product_url"] for r in rows if r["product_url"]]
+        await validate(nav_page, category_url, scraped_urls)
+
+        await browser.close()
+
+    print_summary(rows, output_csv, time.time() - t_start)
+
+
+def run_catalog(catalog_key: str, catalog_config: dict, args) -> None:
+    asyncio.run(run_catalog_async(catalog_key, catalog_config, args))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def main():
+    parser = argparse.ArgumentParser(description="Designer Plants multi-catalog scraper")
+    parser.add_argument(
+        "--catalog", default="all",
+        choices=["all"] + list(CATALOGS.keys()),
+        help="Which catalog to scrape (default: all). Ignored if --catalogs is set.",
+    )
+    parser.add_argument(
+        "--catalogs", default=None,
+        help="Comma-separated list of catalogs, e.g. --catalogs outdoor,verticalgardens",
+    )
+    parser.add_argument(
+        "--test", action="store_true",
+        help="Scrape first load of each catalog only (quick validation run)",
+    )
+    parser.add_argument(
+        "--no-headless", dest="headless", action="store_false", default=True,
+        help="Show the browser window during scraping",
+    )
+    parser.add_argument(
+        "--concurrency", type=int, default=3,
+        help="Playwright pages open in parallel during Phase 2 (default: 3).",
+    )
+    args = parser.parse_args()
+
+    if not AUTH_FILE.exists():
+        print(f"ERROR: {AUTH_FILE} not found.")
+        print("Run  python login.py  first to save your session.")
+        sys.exit(1)
+
+    if args.catalogs:
+        to_run = [k.strip() for k in args.catalogs.split(",") if k.strip()]
+        unknown = [k for k in to_run if k not in CATALOGS]
+        if unknown:
+            print(f"ERROR: unknown catalog key(s): {', '.join(unknown)}")
+            print(f"Valid keys: {', '.join(CATALOGS.keys())}")
+            sys.exit(1)
+    else:
+        to_run = list(CATALOGS.keys()) if args.catalog == "all" else [args.catalog]
+
+    session_start = time.time()
+    for key in to_run:
+        run_catalog(key, CATALOGS[key], args)
+
+    if len(to_run) > 1:
+        print(f"\nAll {len(to_run)} catalogs complete in {time.time()-session_start:.1f}s")
+        print("Output files:")
+        for key in to_run:
+            print(f"  {CATALOGS[key]['output'].name}")
+
+
+if __name__ == "__main__":
+    main()
