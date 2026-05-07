@@ -393,7 +393,8 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
         phase3_write_csv(rows, output_csv)
 
         # ── Validation ────────────────────────────────────────────────────────
-        scraped_urls = [r["product_url"] for r in rows if r["product_url"]]
+        # Normalize scraped URLs the same way phase1_crawl normalizes them
+        scraped_urls = [canonical_url(r["product_url"]) for r in rows if r["product_url"]]
         await validate(nav_page, category_url, scraped_urls)
 
         await browser.close()
