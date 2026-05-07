@@ -68,7 +68,8 @@ async def crawl_category(page, cat_url: str) -> set[str]:
         "a.woocommerce-LoopProduct-link",
         "els => els.map(el => el.href)"
     )
-    return {canonical(href) for href in links}
+    return {canonical(href) for href in links
+            if "/product/" in href and "/product-category/" not in href}
 
 
 def load_csv(catalog_key: str) -> list[dict] | None:
@@ -163,7 +164,12 @@ async def main() -> int:
             for key, cat_url in CATALOGS.items():
                 site_urls = await crawl_category(page, cat_url)
                 csv_urls  = {canonical(r["product_url"]) for r in csv_data[key]}
-                missing   = site_urls - csv_urls
+                # Load skipped URLs from sidecar file (broken listings that redirect to category)
+                skipped_file = HERE / f"dp_{key}_full.skipped.txt"
+                skipped_urls: set[str] = set()
+                if skipped_file.exists():
+                    skipped_urls = {line.strip() for line in skipped_file.read_text(encoding="utf-8").splitlines() if line.strip()}
+                missing   = site_urls - csv_urls - skipped_urls
                 extra     = csv_urls - site_urls
                 match_str = "OK" if not missing else "FAIL"
                 print(f"      {key:18} {len(site_urls):>6} {len(csv_urls):>6} {match_str:>7} {len(missing):>9} {len(extra):>6}")

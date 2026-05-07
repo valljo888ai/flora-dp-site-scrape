@@ -114,7 +114,10 @@ async def phase1_crawl(page, category_url: str, test_mode: bool = False) -> list
         "a.woocommerce-LoopProduct-link",
         "els => els.map(el => el.href)"
     )
-    urls = list(dict.fromkeys(canonical_url(h) for h in links))  # deduplicate, preserve order
+    urls = list(dict.fromkeys(
+        canonical_url(h) for h in links
+        if "/product/" in h and "/product-category/" not in h
+    ))
     print(f"  {'Test load' if test_mode else 'Full load'}: {len(urls)} products (landed on {page.url.split('designerplants.com.au')[-1]})")
     return urls
 
@@ -143,6 +146,11 @@ async def scrape_product(context, url: str, category_label: str, scraped_at: str
         if "my-account" in page.url or "login" in page.url:
             raise SessionExpiredError("Session expired mid-scrape")
 
+        # Guard: if the product URL redirected to a category page it's a broken listing
+        if "/product-category/" in page.url:
+            row["scrape_status"] = "skipped"
+            return row
+
         # Render gate — wait for product title to confirm full page load
         await page.wait_for_selector("h1", timeout=30_000)
 
@@ -158,8 +166,10 @@ async def scrape_product(context, url: str, category_label: str, scraped_at: str
             except Exception:
                 return ""
 
-        # Canonical URL
-        row["product_url"] = await attr("link[rel='canonical']", "href") or url
+        # Canonical URL — fall back to original if canonical resolves to a category page
+        # (some products redirect to a category, e.g. garden-of-eden bespoke)
+        canonical_href = await attr("link[rel='canonical']", "href") or url
+        row["product_url"] = url if "/product-category/" in canonical_href else canonical_href
 
         # Identity
         row["sku"]  = await text("p.product-sku")
@@ -271,14 +281,17 @@ def phase3_write_csv(rows: list[dict], output_path: pathlib.Path) -> None:
         writer.writerows(rows)
 
 
-async def validate(page, category_url: str, scraped_urls: list[str]) -> bool:
+async def validate(page, category_url: str, scraped_urls: list[str],
+                   skipped_urls: set[str] | None = None) -> bool:
     """
     Re-crawl the category and assert every URL found appears in scraped_urls.
+    skipped_urls are broken listings (redirected to category) — excluded from missing check.
     """
     print("\n-- Validation --")
     expected = await phase1_crawl(page, category_url, test_mode=False)
     scraped  = set(scraped_urls)
-    missing  = [u for u in expected if u not in scraped]
+    excluded = skipped_urls or set()
+    missing  = [u for u in expected if u not in scraped and u not in excluded]
 
     print(f"  Expected: {len(expected)}  Scraped: {len(scraped)}  Missing: {len(missing)}")
     if missing:
@@ -360,12 +373,25 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
 
         # ── Phase 3 ───────────────────────────────────────────────────────────
         print(f"\n=== Phase 3: Assembling CSV ===")
+        # Exclude broken listings that redirected to a category page
+        skipped = [r for r in rows if r.get("scrape_status") == "skipped"]
+        if skipped:
+            print(f"  Skipped {len(skipped)} broken listing(s) (redirect to category page):")
+            for r in skipped:
+                print(f"    {r['product_url']}")
+        rows = [r for r in rows if r.get("scrape_status") != "skipped"]
         phase3_write_csv(rows, output_csv)
+        # Write skipped URLs to sidecar so verify.py can exclude them
+        skipped_file = output_csv.with_suffix(".skipped.txt")
+        with open(skipped_file, "w", encoding="utf-8") as f:
+            for r in skipped:
+                f.write(canonical_url(r["product_url"]) + "\n")
 
         # ── Validation ────────────────────────────────────────────────────────
         # Normalize scraped URLs the same way phase1_crawl normalizes them
         scraped_urls = [canonical_url(r["product_url"]) for r in rows if r["product_url"]]
-        await validate(nav_page, category_url, scraped_urls)
+        skipped_set  = {canonical_url(r["product_url"]) for r in skipped if r["product_url"]}
+        await validate(nav_page, category_url, scraped_urls, skipped_urls=skipped_set)
 
         await browser.close()
 
