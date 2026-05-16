@@ -238,4 +238,9 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    try:
+        sys.exit(asyncio.run(main()))
+    except RuntimeError as exc:
+        print(f"\nERROR: {exc}")
+        print("Re-run save_session.py to refresh the session, then retry verify.py.")
+        sys.exit(1)
