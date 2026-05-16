@@ -6,6 +6,13 @@ popping up a visible browser window.
 Usage:
     python save_session.py
 """
+import io
+import sys
+
+if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 import asyncio
 import json
 from pathlib import Path

@@ -20,12 +20,18 @@ Available --catalog values:
   outdoor | verticalgardens
 """
 
+import io
+import sys
+
+if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 import argparse
 import asyncio
 import csv
 import pathlib
 import re
-import sys
 import time
 from collections import Counter
 from datetime import datetime, timezone
