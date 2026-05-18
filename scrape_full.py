@@ -17,7 +17,7 @@ Usage:
   python scrape_full.py --concurrency 5             # Playwright pages in parallel (default 3)
 
 Available --catalog values:
-  outdoor | verticalgardens | topiary | trees | outdoortrees | hedges |
+  outdoor | verticalgardens | greenwalldiscs | topiary | trees | outdoortrees | hedges |
   hangingplants | shrubs | ivy | floweringplants | bamboopalms | planters
 """
 
@@ -54,7 +54,8 @@ USER_AGENT = (
 # ── Catalog definitions ────────────────────────────────────────────────────────
 CATALOGS = {
     "outdoor":        {"label": "Outdoor Plants",        "category_url": "/product-category/artificial-outdoor-plants/",            "output": HERE / "dp_outdoor_full.csv"},
-    "verticalgardens":{"label": "Vertical Gardens",      "category_url": "/product-category/vertical-garden-green-walls/",          "output": HERE / "dp_verticalgardens_full.csv"},
+    "verticalgardens":{"label": "Vertical Gardens",      "category_url": "/product-category/vertical-garden-green-walls/",          "output": HERE / "dp_verticalgardens_full.csv",  "load_more": True},
+    "greenwalldiscs": {"label": "Green Wall Discs",     "category_url": "/product-category/vertical-garden-green-walls/green-wall-art-and-artificial-discs/", "output": HERE / "dp_greenwalldiscs_full.csv", "load_more": True},
     "topiary":        {"label": "Topiary",               "category_url": "/product-category/fake-plants/topiary-balls-and-plants/", "output": HERE / "dp_topiary_full.csv", "crawl_url": "/product-category/fake-plants/topiary-balls-and-plants/page/2/"},
     "trees":          {"label": "Artificial Trees",      "category_url": "/product-category/artificial-trees/",                     "output": HERE / "dp_trees_full.csv"},
     "outdoortrees":   {"label": "Outdoor Trees",         "category_url": "/product-category/outdoor-artificial-trees/",             "output": HERE / "dp_outdoortrees_full.csv"},
@@ -105,19 +106,22 @@ def parse_product_id(url: str) -> str:
 # Phase 1 — Category crawl
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def phase1_crawl(page, category_url: str, test_mode: bool = False, crawl_url: str | None = None) -> list[str]:
+async def phase1_crawl(page, category_url: str, test_mode: bool = False,
+                       crawl_url: str | None = None, load_more: bool = False) -> list[str]:
     """
     Collect all product URLs for a category.
 
-    DP's category pages are cumulative: /page/N/ shows all products up to page N.
-    Navigating to /page/999/ causes WooCommerce to redirect to the last real page,
-    which contains every product in one shot.
+    Strategy A (default): /page/999/ redirect — WooCommerce cumulative pages redirect
+      to the last real page which contains every product in one shot.
 
-    For nested subcategory URLs (e.g. /product-category/fake-plants/topiary-balls-and-plants/),
-    /page/999/ redirects to the parent category instead of the subcategory. In those cases,
-    pass crawl_url pointing to a specific page that returns all products (e.g. /page/2/).
+    Strategy B (crawl_url): for nested subcategory URLs where /page/999/ redirects to
+      the parent, pass crawl_url pointing to a specific page that returns all products.
 
-    In test_mode, loads only the first page (~20 products).
+    Strategy C (load_more=True): for categories that use JavaScript "Load More" buttons
+      and don't support URL-based pagination (e.g. verticalgardens, greenwalldiscs).
+      Repeatedly clicks the Load More button until it disappears.
+
+    In test_mode, loads only the first page (~20 products) regardless of strategy.
 
     Raises SessionExpiredError if redirected to login.
     """
@@ -126,6 +130,8 @@ async def phase1_crawl(page, category_url: str, test_mode: bool = False, crawl_u
         target = base
     elif crawl_url:
         target = BASE_URL + crawl_url.rstrip("/") + "/"
+    elif load_more:
+        target = base + "/"
     else:
         target = base + "/page/999/"
 
@@ -136,6 +142,46 @@ async def phase1_crawl(page, category_url: str, test_mode: bool = False, crawl_u
             "Session expired — re-run login.bat to refresh your auth.json"
         )
 
+    # Strategy C: click Load More until gone
+    if load_more and not test_mode:
+        # Dismiss any overlay/popup that might intercept clicks
+        for overlay_sel in ["#overlay_filter", ".popup-overlay", ".cookie-notice", "[id*='overlay']"]:
+            try:
+                overlay = page.locator(overlay_sel)
+                if await overlay.count() > 0:
+                    await page.evaluate(f"document.querySelector('{overlay_sel}').remove()")
+            except Exception:
+                pass
+
+        clicks = 0
+        while True:
+            btn = page.locator("button.load-more-button-new")
+            if await btn.count() == 0:
+                break
+            count_before = await page.eval_on_selector_all(
+                "a.woocommerce-LoopProduct-link", "els => els.length"
+            )
+            # Remove any overlay that might have reappeared
+            await page.evaluate("const o = document.querySelector('#overlay_filter'); if(o) o.style.display='none';")
+            try:
+                await btn.first.scroll_into_view_if_needed(timeout=5_000)
+            except Exception:
+                pass  # Button may be detached (last page rendered) — check count on next iteration
+            await btn.first.click(force=True, timeout=10_000)
+            # Wait for new products to appear (count increases) rather than networkidle
+            try:
+                await page.wait_for_function(
+                    f"document.querySelectorAll('a.woocommerce-LoopProduct-link').length > {count_before}",
+                    timeout=15_000,
+                )
+            except PlaywrightTimeoutError:
+                pass  # Button may have disappeared (last page) — check on next loop iteration
+            clicks += 1
+            links_so_far = await page.eval_on_selector_all(
+                "a.woocommerce-LoopProduct-link", "els => els.length"
+            )
+            print(f"    Load More click {clicks}: {links_so_far} products loaded so far")
+
     links = await page.eval_on_selector_all(
         "a.woocommerce-LoopProduct-link",
         "els => els.map(el => el.href)"
@@ -144,7 +190,8 @@ async def phase1_crawl(page, category_url: str, test_mode: bool = False, crawl_u
         canonical_url(h) for h in links
         if "/product/" in h and "/product-category/" not in h
     ))
-    print(f"  {'Test load' if test_mode else 'Full load'}: {len(urls)} products (landed on {page.url.split('designerplants.com.au')[-1]})")
+    strategy = "Load More" if (load_more and not test_mode) else ("Test load" if test_mode else "Full load")
+    print(f"  {strategy}: {len(urls)} products (landed on {page.url.split('designerplants.com.au')[-1]})")
     return urls
 
 
@@ -309,13 +356,14 @@ def phase3_write_csv(rows: list[dict], output_path: pathlib.Path) -> None:
 
 async def validate(page, category_url: str, scraped_urls: list[str],
                    skipped_urls: set[str] | None = None,
-                   crawl_url: str | None = None) -> bool:
+                   crawl_url: str | None = None,
+                   load_more: bool = False) -> bool:
     """
     Re-crawl the category and assert every URL found appears in scraped_urls.
     skipped_urls are broken listings (redirected to category) — excluded from missing check.
     """
     print("\n-- Validation --")
-    expected = await phase1_crawl(page, category_url, test_mode=False, crawl_url=crawl_url)
+    expected = await phase1_crawl(page, category_url, test_mode=False, crawl_url=crawl_url, load_more=load_more)
     scraped  = set(scraped_urls)
     excluded = skipped_urls or set()
     missing  = [u for u in expected if u not in scraped and u not in excluded]
@@ -359,6 +407,7 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
     category_url = catalog_config["category_url"]
     output_csv   = catalog_config["output"]
     crawl_url    = catalog_config.get("crawl_url")
+    load_more    = catalog_config.get("load_more", False)
 
     print(f"\n{'#'*60}")
     print(f"# CATALOG : {label}")
@@ -380,7 +429,7 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
         print(f"\n=== Phase 1: Category crawl (Load More) ===")
         t1 = time.time()
         try:
-            urls = await phase1_crawl(nav_page, category_url, test_mode=args.test, crawl_url=crawl_url)
+            urls = await phase1_crawl(nav_page, category_url, test_mode=args.test, crawl_url=crawl_url, load_more=load_more)
         except SessionExpiredError as e:
             print(f"\nERROR: {e}")
             await browser.close()
@@ -419,7 +468,7 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
         # Normalize scraped URLs the same way phase1_crawl normalizes them
         scraped_urls = [canonical_url(r["product_url"]) for r in rows if r["product_url"]]
         skipped_set  = {canonical_url(r["product_url"]) for r in skipped if r["product_url"]}
-        await validate(nav_page, category_url, scraped_urls, skipped_urls=skipped_set, crawl_url=crawl_url)
+        await validate(nav_page, category_url, scraped_urls, skipped_urls=skipped_set, crawl_url=crawl_url, load_more=load_more)
 
         await browser.close()
 

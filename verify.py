@@ -42,6 +42,7 @@ USER_AGENT = (
 CATALOGS = {
     "outdoor":         "/product-category/artificial-outdoor-plants/",
     "verticalgardens": "/product-category/vertical-garden-green-walls/",
+    "greenwalldiscs":  "/product-category/vertical-garden-green-walls/green-wall-art-and-artificial-discs/",
     "topiary":         "/product-category/fake-plants/topiary-balls-and-plants/",
     "trees":           "/product-category/artificial-trees/",
     "outdoortrees":    "/product-category/outdoor-artificial-trees/",
@@ -60,6 +61,9 @@ CRAWL_OVERRIDES = {
     "topiary": "/product-category/fake-plants/topiary-balls-and-plants/page/2/",
 }
 
+# Catalogs that use JavaScript "Load More" pagination (URL-based /page/N/ doesn't work).
+LOAD_MORE_CATALOGS = {"verticalgardens", "greenwalldiscs"}
+
 CRITICAL_FIELDS = [
     "product_url", "sku", "name", "wholesale_price", "in_stock", "image_1",
 ]
@@ -72,25 +76,54 @@ def canonical(href: str) -> str:
     return href.split("?")[0].rstrip("/")
 
 
-async def crawl_category(page, cat_url: str, crawl_url: str | None = None) -> set[str]:
-    """Re-crawl a category using /page/999/ redirect strategy. Returns set of canonical URLs.
+async def crawl_category(page, cat_url: str, crawl_url: str | None = None,
+                         load_more: bool = False) -> set[str]:
+    """Re-crawl a category and return all canonical product URLs.
 
-    DP's category pages are cumulative: /page/N/ shows all products up to page N.
-    /page/999/ redirects to the last real page, which contains every product in one shot.
-    The Load More button uses Nitro CDN JS deferral (nitro-offscreen) and is unreliable
-    in headless Playwright — the /page/999/ approach is the reliable alternative.
-
-    For nested subcategory URLs where /page/999/ redirects to the parent, pass crawl_url
-    pointing to a specific page that returns all products (see CRAWL_OVERRIDES).
+    Strategy A (default): /page/999/ redirect — lands on last real page with all products.
+    Strategy B (crawl_url): specific page override for subcategories where /page/999/
+      redirects to the parent (see CRAWL_OVERRIDES).
+    Strategy C (load_more=True): click Load More until all products are visible, for
+      categories that use JavaScript pagination (see LOAD_MORE_CATALOGS).
     """
+    base = BASE_URL + cat_url.rstrip("/")
     if crawl_url:
         target = BASE_URL + crawl_url.rstrip("/") + "/"
+    elif load_more:
+        target = base + "/"
     else:
-        base = BASE_URL + cat_url.rstrip("/")
         target = base + "/page/999/"
     await page.goto(target, wait_until="networkidle", timeout=30_000)
     if "my-account" in page.url or "login" in page.url:
         raise RuntimeError("Session expired during verification — re-run save_session.py")
+
+    if load_more:
+        for overlay_sel in ["#overlay_filter", ".popup-overlay", "[id*='overlay']"]:
+            try:
+                if await page.locator(overlay_sel).count() > 0:
+                    await page.evaluate(f"document.querySelector('{overlay_sel}').remove()")
+            except Exception:
+                pass
+        while True:
+            btn = page.locator("button.load-more-button-new")
+            if await btn.count() == 0:
+                break
+            count_before = await page.eval_on_selector_all(
+                "a.woocommerce-LoopProduct-link", "els => els.length"
+            )
+            await page.evaluate("const o = document.querySelector('#overlay_filter'); if(o) o.style.display='none';")
+            try:
+                await btn.first.scroll_into_view_if_needed(timeout=5_000)
+            except Exception:
+                pass
+            await btn.first.click(force=True, timeout=10_000)
+            try:
+                await page.wait_for_function(
+                    f"document.querySelectorAll('a.woocommerce-LoopProduct-link').length > {count_before}",
+                    timeout=15_000,
+                )
+            except Exception:
+                pass
 
     links = await page.eval_on_selector_all(
         "a.woocommerce-LoopProduct-link",
@@ -190,7 +223,7 @@ async def main() -> int:
         page = await context.new_page()
         try:
             for key, cat_url in CATALOGS.items():
-                site_urls = await crawl_category(page, cat_url, crawl_url=CRAWL_OVERRIDES.get(key))
+                site_urls = await crawl_category(page, cat_url, crawl_url=CRAWL_OVERRIDES.get(key), load_more=(key in LOAD_MORE_CATALOGS))
                 csv_urls  = {canonical(r["product_url"]) for r in csv_data[key]}
                 # Load skipped URLs from sidecar file (broken listings that redirect to category)
                 skipped_file = HERE / f"dp_{key}_full.skipped.txt"

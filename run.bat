@@ -8,11 +8,11 @@ echo.
 :: If args were passed, treat as single-catalog or option passthrough
 if not "%~1"=="" goto single_catalog
 
-:: No args — run all 12 catalogs with a session refresh before each
+:: No args — run all 13 catalogs with a session refresh before each
 echo Running all catalogs with session refresh between each.
 echo.
 
-for %%C in (outdoor verticalgardens topiary trees outdoortrees hedges hangingplants shrubs ivy floweringplants bamboopalms planters) do (
+for %%C in (outdoor verticalgardens greenwalldiscs topiary trees outdoortrees hedges hangingplants shrubs ivy floweringplants bamboopalms planters) do (
     echo ------------------------------------------------------------
     echo  Refreshing session before catalog: %%C
     echo ------------------------------------------------------------
