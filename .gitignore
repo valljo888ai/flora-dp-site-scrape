@@ -1,0 +1,16 @@
+# Session credentials — never commit
+auth.json
+
+# Scraped CSV outputs — runtime data, not source code
+dp_*.csv
+dp_*.skipped.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Playwright
+.playwright-mcp/
