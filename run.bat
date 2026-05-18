@@ -8,7 +8,7 @@ echo.
 :: If args were passed, treat as single-catalog or option passthrough
 if not "%~1"=="" goto single_catalog
 
-:: No args — run all 2 catalogs with a session refresh before each
+:: No args — run all 12 catalogs with a session refresh before each
 echo Running all catalogs with session refresh between each.
 echo.
 
