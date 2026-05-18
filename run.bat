@@ -12,7 +12,7 @@ if not "%~1"=="" goto single_catalog
 echo Running all catalogs with session refresh between each.
 echo.
 
-for %%C in (outdoor verticalgardens) do (
+for %%C in (outdoor verticalgardens topiary trees outdoortrees hedges hangingplants shrubs ivy floweringplants bamboopalms planters) do (
     echo ------------------------------------------------------------
     echo  Refreshing session before catalog: %%C
     echo ------------------------------------------------------------

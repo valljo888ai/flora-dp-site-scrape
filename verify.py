@@ -42,6 +42,16 @@ USER_AGENT = (
 CATALOGS = {
     "outdoor":         "/product-category/artificial-outdoor-plants/",
     "verticalgardens": "/product-category/vertical-garden-green-walls/",
+    "topiary":         "/product-category/fake-plants/topiary-balls-and-plants/",
+    "trees":           "/product-category/artificial-trees/",
+    "outdoortrees":    "/product-category/outdoor-artificial-trees/",
+    "hedges":          "/product-category/artificial-hedges/",
+    "hangingplants":   "/product-category/artificial-hanging-plants/",
+    "shrubs":          "/product-category/artificial-shrubs-and-bushes/",
+    "ivy":             "/product-category/artificial-ivy/",
+    "floweringplants": "/product-category/artificial-flowering-plants/",
+    "bamboopalms":     "/product-category/artificial-bamboo-and-palms/",
+    "planters":        "/product-category/planters/",
 }
 
 CRITICAL_FIELDS = [

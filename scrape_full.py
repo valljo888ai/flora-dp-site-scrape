@@ -17,7 +17,8 @@ Usage:
   python scrape_full.py --concurrency 5             # Playwright pages in parallel (default 3)
 
 Available --catalog values:
-  outdoor | verticalgardens
+  outdoor | verticalgardens | topiary | trees | outdoortrees | hedges |
+  hangingplants | shrubs | ivy | floweringplants | bamboopalms | planters
 """
 
 import io
@@ -52,8 +53,18 @@ USER_AGENT = (
 
 # ── Catalog definitions ────────────────────────────────────────────────────────
 CATALOGS = {
-    "outdoor":        {"label": "Outdoor Plants",   "category_url": "/product-category/artificial-outdoor-plants/",  "output": HERE / "dp_outdoor_full.csv"},
-    "verticalgardens": {"label": "Vertical Gardens", "category_url": "/product-category/vertical-garden-green-walls/", "output": HERE / "dp_verticalgardens_full.csv"},
+    "outdoor":        {"label": "Outdoor Plants",        "category_url": "/product-category/artificial-outdoor-plants/",            "output": HERE / "dp_outdoor_full.csv"},
+    "verticalgardens":{"label": "Vertical Gardens",      "category_url": "/product-category/vertical-garden-green-walls/",          "output": HERE / "dp_verticalgardens_full.csv"},
+    "topiary":        {"label": "Topiary",               "category_url": "/product-category/fake-plants/topiary-balls-and-plants/", "output": HERE / "dp_topiary_full.csv"},
+    "trees":          {"label": "Artificial Trees",      "category_url": "/product-category/artificial-trees/",                     "output": HERE / "dp_trees_full.csv"},
+    "outdoortrees":   {"label": "Outdoor Trees",         "category_url": "/product-category/outdoor-artificial-trees/",             "output": HERE / "dp_outdoortrees_full.csv"},
+    "hedges":         {"label": "Hedges",                "category_url": "/product-category/artificial-hedges/",                    "output": HERE / "dp_hedges_full.csv"},
+    "hangingplants":  {"label": "Hanging Plants",        "category_url": "/product-category/artificial-hanging-plants/",            "output": HERE / "dp_hangingplants_full.csv"},
+    "shrubs":         {"label": "Shrubs & Small Plants", "category_url": "/product-category/artificial-shrubs-and-bushes/",         "output": HERE / "dp_shrubs_full.csv"},
+    "ivy":            {"label": "Ivy & Garlands",        "category_url": "/product-category/artificial-ivy/",                      "output": HERE / "dp_ivy_full.csv"},
+    "floweringplants":{"label": "Flowering Plants",      "category_url": "/product-category/artificial-flowering-plants/",          "output": HERE / "dp_floweringplants_full.csv"},
+    "bamboopalms":    {"label": "Bamboos & Palms",       "category_url": "/product-category/artificial-bamboo-and-palms/",          "output": HERE / "dp_bamboopalms_full.csv"},
+    "planters":       {"label": "Planters",              "category_url": "/product-category/planters/",                            "output": HERE / "dp_planters_full.csv"},
 }
 
 FIELDNAMES = [
