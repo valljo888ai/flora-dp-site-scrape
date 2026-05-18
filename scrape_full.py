@@ -55,7 +55,7 @@ USER_AGENT = (
 CATALOGS = {
     "outdoor":        {"label": "Outdoor Plants",        "category_url": "/product-category/artificial-outdoor-plants/",            "output": HERE / "dp_outdoor_full.csv"},
     "verticalgardens":{"label": "Vertical Gardens",      "category_url": "/product-category/vertical-garden-green-walls/",          "output": HERE / "dp_verticalgardens_full.csv"},
-    "topiary":        {"label": "Topiary",               "category_url": "/product-category/fake-plants/topiary-balls-and-plants/", "output": HERE / "dp_topiary_full.csv"},
+    "topiary":        {"label": "Topiary",               "category_url": "/product-category/fake-plants/topiary-balls-and-plants/", "output": HERE / "dp_topiary_full.csv", "crawl_url": "/product-category/fake-plants/topiary-balls-and-plants/page/2/"},
     "trees":          {"label": "Artificial Trees",      "category_url": "/product-category/artificial-trees/",                     "output": HERE / "dp_trees_full.csv"},
     "outdoortrees":   {"label": "Outdoor Trees",         "category_url": "/product-category/outdoor-artificial-trees/",             "output": HERE / "dp_outdoortrees_full.csv"},
     "hedges":         {"label": "Hedges",                "category_url": "/product-category/artificial-hedges/",                    "output": HERE / "dp_hedges_full.csv"},
@@ -105,7 +105,7 @@ def parse_product_id(url: str) -> str:
 # Phase 1 — Category crawl
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def phase1_crawl(page, category_url: str, test_mode: bool = False) -> list[str]:
+async def phase1_crawl(page, category_url: str, test_mode: bool = False, crawl_url: str | None = None) -> list[str]:
     """
     Collect all product URLs for a category.
 
@@ -113,12 +113,21 @@ async def phase1_crawl(page, category_url: str, test_mode: bool = False) -> list
     Navigating to /page/999/ causes WooCommerce to redirect to the last real page,
     which contains every product in one shot.
 
+    For nested subcategory URLs (e.g. /product-category/fake-plants/topiary-balls-and-plants/),
+    /page/999/ redirects to the parent category instead of the subcategory. In those cases,
+    pass crawl_url pointing to a specific page that returns all products (e.g. /page/2/).
+
     In test_mode, loads only the first page (~20 products).
 
     Raises SessionExpiredError if redirected to login.
     """
     base = BASE_URL + category_url.rstrip("/")
-    target = base if test_mode else base + "/page/999/"
+    if test_mode:
+        target = base
+    elif crawl_url:
+        target = BASE_URL + crawl_url.rstrip("/") + "/"
+    else:
+        target = base + "/page/999/"
 
     await page.goto(target, wait_until="networkidle", timeout=30_000)
 
@@ -299,13 +308,14 @@ def phase3_write_csv(rows: list[dict], output_path: pathlib.Path) -> None:
 
 
 async def validate(page, category_url: str, scraped_urls: list[str],
-                   skipped_urls: set[str] | None = None) -> bool:
+                   skipped_urls: set[str] | None = None,
+                   crawl_url: str | None = None) -> bool:
     """
     Re-crawl the category and assert every URL found appears in scraped_urls.
     skipped_urls are broken listings (redirected to category) — excluded from missing check.
     """
     print("\n-- Validation --")
-    expected = await phase1_crawl(page, category_url, test_mode=False)
+    expected = await phase1_crawl(page, category_url, test_mode=False, crawl_url=crawl_url)
     scraped  = set(scraped_urls)
     excluded = skipped_urls or set()
     missing  = [u for u in expected if u not in scraped and u not in excluded]
@@ -348,6 +358,7 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
     label        = catalog_config["label"]
     category_url = catalog_config["category_url"]
     output_csv   = catalog_config["output"]
+    crawl_url    = catalog_config.get("crawl_url")
 
     print(f"\n{'#'*60}")
     print(f"# CATALOG : {label}")
@@ -369,7 +380,7 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
         print(f"\n=== Phase 1: Category crawl (Load More) ===")
         t1 = time.time()
         try:
-            urls = await phase1_crawl(nav_page, category_url, test_mode=args.test)
+            urls = await phase1_crawl(nav_page, category_url, test_mode=args.test, crawl_url=crawl_url)
         except SessionExpiredError as e:
             print(f"\nERROR: {e}")
             await browser.close()
@@ -408,7 +419,7 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
         # Normalize scraped URLs the same way phase1_crawl normalizes them
         scraped_urls = [canonical_url(r["product_url"]) for r in rows if r["product_url"]]
         skipped_set  = {canonical_url(r["product_url"]) for r in skipped if r["product_url"]}
-        await validate(nav_page, category_url, scraped_urls, skipped_urls=skipped_set)
+        await validate(nav_page, category_url, scraped_urls, skipped_urls=skipped_set, crawl_url=crawl_url)
 
         await browser.close()
 

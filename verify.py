@@ -54,6 +54,12 @@ CATALOGS = {
     "planters":        "/product-category/planters/",
 }
 
+# For subcategory URLs where /page/999/ redirects to the parent category,
+# override the crawl URL with a specific page that returns all products.
+CRAWL_OVERRIDES = {
+    "topiary": "/product-category/fake-plants/topiary-balls-and-plants/page/2/",
+}
+
 CRITICAL_FIELDS = [
     "product_url", "sku", "name", "wholesale_price", "in_stock", "image_1",
 ]
@@ -66,16 +72,22 @@ def canonical(href: str) -> str:
     return href.split("?")[0].rstrip("/")
 
 
-async def crawl_category(page, cat_url: str) -> set[str]:
+async def crawl_category(page, cat_url: str, crawl_url: str | None = None) -> set[str]:
     """Re-crawl a category using /page/999/ redirect strategy. Returns set of canonical URLs.
 
     DP's category pages are cumulative: /page/N/ shows all products up to page N.
     /page/999/ redirects to the last real page, which contains every product in one shot.
     The Load More button uses Nitro CDN JS deferral (nitro-offscreen) and is unreliable
     in headless Playwright — the /page/999/ approach is the reliable alternative.
+
+    For nested subcategory URLs where /page/999/ redirects to the parent, pass crawl_url
+    pointing to a specific page that returns all products (see CRAWL_OVERRIDES).
     """
-    base = BASE_URL + cat_url.rstrip("/")
-    target = base + "/page/999/"
+    if crawl_url:
+        target = BASE_URL + crawl_url.rstrip("/") + "/"
+    else:
+        base = BASE_URL + cat_url.rstrip("/")
+        target = base + "/page/999/"
     await page.goto(target, wait_until="networkidle", timeout=30_000)
     if "my-account" in page.url or "login" in page.url:
         raise RuntimeError("Session expired during verification — re-run save_session.py")
@@ -178,7 +190,7 @@ async def main() -> int:
         page = await context.new_page()
         try:
             for key, cat_url in CATALOGS.items():
-                site_urls = await crawl_category(page, cat_url)
+                site_urls = await crawl_category(page, cat_url, crawl_url=CRAWL_OVERRIDES.get(key))
                 csv_urls  = {canonical(r["product_url"]) for r in csv_data[key]}
                 # Load skipped URLs from sidecar file (broken listings that redirect to category)
                 skipped_file = HERE / f"dp_{key}_full.skipped.txt"
