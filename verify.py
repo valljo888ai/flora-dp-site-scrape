@@ -97,7 +97,7 @@ async def crawl_category(page, cat_url: str, crawl_url: str | None = None,
         target = base + "/"
     else:
         target = base + "/page/999/"
-    await page.goto(target, wait_until="networkidle", timeout=30_000)
+    await page.goto(target, wait_until="networkidle", timeout=60_000)
     if "my-account" in page.url or "login" in page.url:
         raise RuntimeError("Session expired during verification — re-run save_session.py")
 
