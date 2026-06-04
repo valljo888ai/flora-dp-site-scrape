@@ -238,8 +238,15 @@ async def scrape_product(context, url: str, category_label: str, scraped_at: str
         if "my-account" in page.url or "login" in page.url:
             raise SessionExpiredError("Session expired mid-scrape")
 
-        # Guard: if the product URL redirected to a category page it's a broken listing
+        # Guard: broken listing redirected to a category page
         if "/product-category/" in page.url:
+            row["scrape_status"] = "skipped"
+            return row
+
+        # Guard: broken listing redirected to a completely different product page
+        # (e.g. pothospoletree → bird-of-paradise). canonical_url strips trailing
+        # slashes/query params so minor URL variations don't trigger a false skip.
+        if canonical_url(page.url) != canonical_url(url):
             row["scrape_status"] = "skipped"
             return row
 
@@ -258,10 +265,9 @@ async def scrape_product(context, url: str, category_label: str, scraped_at: str
             except Exception:
                 return ""
 
-        # Canonical URL — fall back to original if canonical resolves to a category page
-        # (some products redirect to a category, e.g. garden-of-eden bespoke)
-        canonical_href = await attr("link[rel='canonical']", "href") or url
-        row["product_url"] = url if "/product-category/" in canonical_href else canonical_href
+        # Always use the original input URL — it matches what the category page linked to
+        # and what verify.py checks against. Canonical tag is not used for product_url.
+        row["product_url"] = url
 
         # Identity
         row["sku"]  = await text("p.product-sku")
