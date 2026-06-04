@@ -1,5 +1,6 @@
 # Session credentials — never commit
 auth.json
+credentials.json
 
 # Scraped CSV outputs — runtime data, not source code
 dp_*.csv

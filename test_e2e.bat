@@ -24,8 +24,8 @@ if %ERRORLEVEL% neq 0 (
 )
 echo.
 
-echo [3/3] Verifying output CSV...
-python verify.py --catalogs outdoor
+echo [3/3] Verifying output CSV (fields and integrity only, no coverage re-crawl)...
+python verify.py --catalogs outdoor --skip-coverage
 if %ERRORLEVEL% neq 0 (
     echo.
     echo SMOKE TEST FAILED — see verification output above.

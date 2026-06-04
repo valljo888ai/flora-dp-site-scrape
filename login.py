@@ -13,10 +13,16 @@ Usage:
 """
 
 import argparse
+import io
 import json
 import os
 import pathlib
 import sys
+
+if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 from playwright.sync_api import sync_playwright
 
 HERE       = pathlib.Path(__file__).parent

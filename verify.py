@@ -212,6 +212,10 @@ async def main() -> int:
         help="Limit verification to these catalog keys (default: all)",
         choices=list(CATALOGS.keys()),
     )
+    parser.add_argument(
+        "--skip-coverage", action="store_true",
+        help="Skip the live site re-crawl (checks 2 and 3 only). Useful with --limit runs.",
+    )
     args = parser.parse_args()
     active_catalogs = {k: v for k, v in CATALOGS.items() if args.catalogs is None or k in args.catalogs}
 
@@ -246,37 +250,38 @@ async def main() -> int:
     print(f"\nLoaded {total} rows across {len(CATALOGS)} CSVs.")
 
     # Coverage check
-    print("\n[1/3] Coverage check — re-crawling categories ...")
-    print(f"      {'Catalog':18} {'Site':>6} {'CSV':>6} {'Match':>7} {'Missing':>9} {'Extra':>6}")
-    print("      " + "-" * 53)
-
     coverage_failures = []
     coverage_extras   = []
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        context = await browser.new_context(
-            storage_state=str(AUTH_FILE), user_agent=USER_AGENT,
-        )
-        page = await context.new_page()
-        try:
-            for key, cat_url in active_catalogs.items():
-                site_urls = await crawl_category(page, cat_url, crawl_url=CRAWL_OVERRIDES.get(key), load_more=(key in LOAD_MORE_CATALOGS))
-                csv_urls  = {canonical(r["product_url"]) for r in csv_data[key]}
-                # Load skipped URLs from sidecar file (broken listings that redirect to category)
-                skipped_file = HERE / f"dp_{key}_full.skipped.txt"
-                skipped_urls: set[str] = set()
-                if skipped_file.exists():
-                    skipped_urls = {line.strip() for line in skipped_file.read_text(encoding="utf-8").splitlines() if line.strip()}
-                missing   = site_urls - csv_urls - skipped_urls
-                extra     = csv_urls - site_urls
-                match_str = "OK" if not missing else "FAIL"
-                print(f"      {key:18} {len(site_urls):>6} {len(csv_urls):>6} {match_str:>7} {len(missing):>9} {len(extra):>6}")
-                if missing:
-                    coverage_failures.append((key, missing))
-                if extra:
-                    coverage_extras.append((key, extra))
-        finally:
-            await browser.close()
+    if args.skip_coverage:
+        print("\n[1/3] Coverage check — SKIPPED (--skip-coverage)")
+    else:
+        print("\n[1/3] Coverage check — re-crawling categories ...")
+        print(f"      {'Catalog':18} {'Site':>6} {'CSV':>6} {'Match':>7} {'Missing':>9} {'Extra':>6}")
+        print("      " + "-" * 53)
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            context = await browser.new_context(
+                storage_state=str(AUTH_FILE), user_agent=USER_AGENT,
+            )
+            page = await context.new_page()
+            try:
+                for key, cat_url in active_catalogs.items():
+                    site_urls = await crawl_category(page, cat_url, crawl_url=CRAWL_OVERRIDES.get(key), load_more=(key in LOAD_MORE_CATALOGS))
+                    csv_urls  = {canonical(r["product_url"]) for r in csv_data[key]}
+                    skipped_file = HERE / f"dp_{key}_full.skipped.txt"
+                    skipped_urls: set[str] = set()
+                    if skipped_file.exists():
+                        skipped_urls = {line.strip() for line in skipped_file.read_text(encoding="utf-8").splitlines() if line.strip()}
+                    missing   = site_urls - csv_urls - skipped_urls
+                    extra     = csv_urls - site_urls
+                    match_str = "OK" if not missing else "FAIL"
+                    print(f"      {key:18} {len(site_urls):>6} {len(csv_urls):>6} {match_str:>7} {len(missing):>9} {len(extra):>6}")
+                    if missing:
+                        coverage_failures.append((key, missing))
+                    if extra:
+                        coverage_extras.append((key, extra))
+            finally:
+                await browser.close()
 
     # Critical fields
     print("\n[2/3] Critical fields check ...")
