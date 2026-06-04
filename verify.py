@@ -24,6 +24,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+import argparse
 import asyncio
 import csv
 import pathlib
@@ -38,6 +39,8 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
 )
+MAX_LOAD_MORE_CLICKS = 200
+MAX_STALLED_LOAD_MORE_CLICKS = 2
 
 CATALOGS = {
     "outdoor":         "/product-category/artificial-outdoor-plants/",
@@ -104,9 +107,19 @@ async def crawl_category(page, cat_url: str, crawl_url: str | None = None,
                     await page.evaluate(f"document.querySelector('{overlay_sel}').remove()")
             except Exception:
                 pass
+        clicks = 0
+        stalled_clicks = 0
         while True:
             btn = page.locator("button.load-more-button-new")
             if await btn.count() == 0:
+                break
+            if clicks >= MAX_LOAD_MORE_CLICKS:
+                print(f"    Stopping Load More after {clicks} clicks (safety limit)")
+                break
+            try:
+                if not await btn.first.is_visible(timeout=2_000):
+                    break
+            except Exception:
                 break
             count_before = await page.eval_on_selector_all(
                 "a.woocommerce-LoopProduct-link", "els => els.length"
@@ -124,6 +137,18 @@ async def crawl_category(page, cat_url: str, crawl_url: str | None = None,
                 )
             except Exception:
                 pass
+            clicks += 1
+            links_so_far = await page.eval_on_selector_all(
+                "a.woocommerce-LoopProduct-link", "els => els.length"
+            )
+            if links_so_far <= count_before:
+                stalled_clicks += 1
+                print(f"    Load More did not add products ({stalled_clicks}/{MAX_STALLED_LOAD_MORE_CLICKS})")
+                if stalled_clicks >= MAX_STALLED_LOAD_MORE_CLICKS:
+                    print("    Stopping Load More because product count stopped changing")
+                    break
+            else:
+                stalled_clicks = 0
 
     links = await page.eval_on_selector_all(
         "a.woocommerce-LoopProduct-link",
@@ -180,8 +205,19 @@ def check_integrity(all_rows: list[dict]) -> list[str]:
 
 
 async def main() -> int:
+    parser = argparse.ArgumentParser(description="Verify Designer Plants scrape output")
+    parser.add_argument(
+        "--catalogs", nargs="+", metavar="CATALOG",
+        help="Limit verification to these catalog keys (default: all)",
+        choices=list(CATALOGS.keys()),
+    )
+    args = parser.parse_args()
+    active_catalogs = {k: v for k, v in CATALOGS.items() if args.catalogs is None or k in args.catalogs}
+
     print("=" * 60)
     print("  Designer Plants — Data Verification")
+    if args.catalogs:
+        print(f"  Catalogs: {', '.join(active_catalogs)}")
     print("=" * 60)
 
     if not AUTH_FILE.exists():
@@ -191,7 +227,7 @@ async def main() -> int:
     # Load CSVs
     csv_data = {}
     missing_csvs = []
-    for key in CATALOGS:
+    for key in active_catalogs:
         rows = load_csv(key)
         if rows is None:
             missing_csvs.append(key)
@@ -222,7 +258,7 @@ async def main() -> int:
         )
         page = await context.new_page()
         try:
-            for key, cat_url in CATALOGS.items():
+            for key, cat_url in active_catalogs.items():
                 site_urls = await crawl_category(page, cat_url, crawl_url=CRAWL_OVERRIDES.get(key), load_more=(key in LOAD_MORE_CATALOGS))
                 csv_urls  = {canonical(r["product_url"]) for r in csv_data[key]}
                 # Load skipped URLs from sidecar file (broken listings that redirect to category)

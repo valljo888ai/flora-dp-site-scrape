@@ -50,6 +50,8 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
 )
+MAX_LOAD_MORE_CLICKS = 200
+MAX_STALLED_LOAD_MORE_CLICKS = 2
 
 # ── Catalog definitions ────────────────────────────────────────────────────────
 CATALOGS = {
@@ -154,9 +156,18 @@ async def phase1_crawl(page, category_url: str, test_mode: bool = False,
                 pass
 
         clicks = 0
+        stalled_clicks = 0
         while True:
             btn = page.locator("button.load-more-button-new")
             if await btn.count() == 0:
+                break
+            if clicks >= MAX_LOAD_MORE_CLICKS:
+                print(f"    Stopping Load More after {clicks} clicks (safety limit)")
+                break
+            try:
+                if not await btn.first.is_visible(timeout=2_000):
+                    break
+            except Exception:
                 break
             count_before = await page.eval_on_selector_all(
                 "a.woocommerce-LoopProduct-link", "els => els.length"
@@ -181,6 +192,14 @@ async def phase1_crawl(page, category_url: str, test_mode: bool = False,
                 "a.woocommerce-LoopProduct-link", "els => els.length"
             )
             print(f"    Load More click {clicks}: {links_so_far} products loaded so far")
+            if links_so_far <= count_before:
+                stalled_clicks += 1
+                print(f"    Load More did not add products ({stalled_clicks}/{MAX_STALLED_LOAD_MORE_CLICKS})")
+                if stalled_clicks >= MAX_STALLED_LOAD_MORE_CLICKS:
+                    print("    Stopping Load More because product count stopped changing")
+                    break
+            else:
+                stalled_clicks = 0
 
     links = await page.eval_on_selector_all(
         "a.woocommerce-LoopProduct-link",
