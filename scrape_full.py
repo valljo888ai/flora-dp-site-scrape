@@ -137,7 +137,7 @@ async def phase1_crawl(page, category_url: str, test_mode: bool = False,
     else:
         target = base + "/page/999/"
 
-    await page.goto(target, wait_until="networkidle", timeout=30_000)
+    await page.goto(target, wait_until="networkidle", timeout=60_000)
 
     if "my-account" in page.url or "login" in page.url:
         raise SessionExpiredError(
@@ -490,7 +490,11 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
         # Normalize scraped URLs the same way phase1_crawl normalizes them
         scraped_urls = [canonical_url(r["product_url"]) for r in rows if r["product_url"]]
         skipped_set  = {canonical_url(r["product_url"]) for r in skipped if r["product_url"]}
-        await validate(nav_page, category_url, scraped_urls, skipped_urls=skipped_set, crawl_url=crawl_url, load_more=load_more)
+        try:
+            await validate(nav_page, category_url, scraped_urls, skipped_urls=skipped_set, crawl_url=crawl_url, load_more=load_more)
+        except Exception as e:
+            print(f"\n  WARNING: inline validation failed ({e.__class__.__name__}: {e})")
+            print("  CSV was written — run verify.py after all catalogs to check coverage.")
 
         await browser.close()
 
