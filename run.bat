@@ -16,7 +16,7 @@ for %%C in (outdoor verticalgardens greenwalldiscs topiary trees outdoortrees he
     echo ------------------------------------------------------------
     echo  Refreshing session before catalog: %%C
     echo ------------------------------------------------------------
-    python save_session.py
+    python login.py --force
     if %ERRORLEVEL% neq 0 (
         echo ERROR: Session refresh failed for catalog %%C. See output above.
         pause
@@ -37,7 +37,7 @@ for %%C in (outdoor verticalgardens greenwalldiscs topiary trees outdoortrees he
 echo ------------------------------------------------------------
 echo  Refreshing session before verification
 echo ------------------------------------------------------------
-python save_session.py
+python login.py --force
 if %ERRORLEVEL% neq 0 (
     echo ERROR: Session refresh failed before verification.
     pause
@@ -60,7 +60,7 @@ goto done
 :single_catalog
 :: Single catalog or --test etc. — refresh session once then run
 echo Refreshing session...
-python save_session.py
+python login.py --force
 if %ERRORLEVEL% neq 0 (
     echo ERROR: Session refresh failed. See output above.
     pause

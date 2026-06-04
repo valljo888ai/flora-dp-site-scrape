@@ -1,21 +1,22 @@
 """
 verify.py — Post-scrape data verification.
 
-Runs three checks against dp_outdoor_full.csv and dp_verticalgardens_full.csv:
+Runs three checks against all 13 catalog CSVs (or a subset via --catalogs):
 
-  1. Coverage:        re-crawl every category (Load More) and confirm all
-                      currently-listed product URLs are present in the CSVs.
+  1. Coverage:        re-crawl every category and confirm all currently-listed
+                      product URLs are present in the CSVs.
   2. Critical fields: every row has product_url, sku, name, wholesale_price,
                       in_stock, image_1 populated.
-  3. Integrity:       no duplicate product_url values; in_stock values from
-                      known set; image_1 starts with 'http'.
+  3. Integrity:       no duplicate product_url values within a catalog;
+                      in_stock values from known set; image_1 starts with 'http'.
 
 Exits 0 on PASS, 1 on FAIL. Extras (CSV rows not on site) reported as INFO.
 
 Usage:
   python verify.py
+  python verify.py --catalogs outdoor trees
 
-Requires auth.json to exist (run save_session.py or login.bat first).
+Requires auth.json to exist (run login.bat or: python login.py).
 """
 import io
 import sys
