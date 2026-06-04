@@ -454,6 +454,9 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
             await browser.close()
             sys.exit(1)
         print(f"Phase 1 done in {time.time()-t1:.1f}s  —  {len(urls)} products")
+        if args.limit and len(urls) > args.limit:
+            urls = urls[:args.limit]
+            print(f"  (--limit {args.limit}: capped to {len(urls)} products)")
 
         # ── Phase 2 ───────────────────────────────────────────────────────────
         print(f"\n=== Phase 2: Product scrape ({args.concurrency} concurrent pages) ===")
@@ -524,6 +527,10 @@ def main():
     parser.add_argument(
         "--concurrency", type=int, default=3,
         help="Playwright pages open in parallel during Phase 2 (default: 3).",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Cap the number of products scraped per catalog (useful for quick smoke tests).",
     )
     args = parser.parse_args()
 
