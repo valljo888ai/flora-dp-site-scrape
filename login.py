@@ -13,15 +13,14 @@ Usage:
 """
 
 import argparse
-import io
 import json
 import os
 import pathlib
 import sys
 
-if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+import dp_logging
+
+dp_logging.init("login")
 
 from playwright.sync_api import sync_playwright
 
@@ -49,6 +48,7 @@ def load_credentials(force: bool) -> tuple[str, str]:
 
     if force:
         print("ERROR: No credentials found. Set DP_EMAIL/DP_PASSWORD or create credentials.json.")
+        dp_logging.record_status("login", "failed", reason="no_credentials")
         sys.exit(1)
 
     print("No credentials found in env vars or credentials.json.")
@@ -107,6 +107,7 @@ def main() -> None:
 
         if "my-account" in page.url or "login" in page.url:
             print("\nERROR: Login failed — check your credentials.")
+            dp_logging.record_status("login", "failed", reason="invalid_session", email=email)
             browser.close()
             sys.exit(1)
 
@@ -116,7 +117,16 @@ def main() -> None:
 
     print(f"\nSession saved to {AUTH_FILE}")
     print("  You can now run: python scrape_full.py")
+    dp_logging.record_status("login", "ok", email=email)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"\nERROR: {type(exc).__name__}: {exc}")
+        print(dp_logging.format_exc())
+        dp_logging.record_status("login", "error", error=f"{type(exc).__name__}: {exc}")
+        sys.exit(1)

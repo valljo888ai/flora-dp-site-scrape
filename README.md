@@ -253,6 +253,43 @@ Several products are listed under multiple categories on the site. Each catalog 
 
 ---
 
+## Logging
+
+Every execution is logged to a gitignored `logs/` directory by the shared `dp_logging.py` module. There are three outputs:
+
+| File | Format | Purpose |
+|---|---|---|
+| `logs/run_<RUN_ID>.log` | Plain text | Full console transcript of a run — every `print()` from `login.py`, `scrape_full.py`, and `verify.py` is teed here, including tracebacks. This is where you read **what happened and what errored**. |
+| `logs/runs.log` | Aligned text table | One line per execution outcome — the at-a-glance **status** of each catalog scrape, login, and verification across all runs. |
+| `logs/status.jsonl` | JSON Lines | Same outcomes as `runs.log` but machine-readable (one JSON object per line) for downstream tooling. |
+
+**Run grouping.** `run.bat` generates a `DP_RUN_ID` (a `yyyyMMdd_HHmmss` timestamp) and exports it before launching the per-catalog Python processes, so `login.py` + every `scrape_full.py` + `verify.py` in a single full run all append to **one** `run_<RUN_ID>.log`. Running a script manually without `DP_RUN_ID` set generates a fresh run id for that process.
+
+**What gets a status record:**
+
+| Component | Status tokens | Extra fields |
+|---|---|---|
+| `scrape_full` | `ok`, `failed`, `session_expired` | `catalog`, `products`, `skipped`, `failed`, `seconds` (`error` on failure) |
+| `verify` | `passed`, `failed`, `session_expired`, `error` | `rows`, `coverage_fail_catalogs`, `field_issues`, `integrity_issues` |
+| `login` | `ok`, `failed`, `error` | `email`; `reason` on failure — every login refresh is recorded (a full run produces one `login ok` line per catalog) |
+
+**Reading the logs after a run.** `run.bat` prints the run log path on start and finish. To review:
+
+```powershell
+# Quick status of the latest run
+Get-Content logs\runs.log -Tail 20
+
+# Full detail / errors for a specific run
+Get-Content logs\run_<RUN_ID>.log
+
+# Any failures across history
+Select-String -Path logs\status.jsonl -Pattern '"status": "failed"'
+```
+
+`logs/` is gitignored — logs are runtime artifacts, regenerated on each run.
+
+---
+
 ## Dependencies
 
 ```

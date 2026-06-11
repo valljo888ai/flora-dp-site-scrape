@@ -1,7 +1,16 @@
 @echo off
 cd /d "%~dp0"
+
+:: Shared run id so login.py + every scrape_full.py + verify.py in this run all
+:: write to the same logs\run_<id>.log file.
+for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set DP_RUN_ID=%%I
+
 echo ============================================================
 echo  Designer Plants Scraper — Full Run
+echo ============================================================
+echo  Run id    : %DP_RUN_ID%
+echo  Log file  : %~dp0logs\run_%DP_RUN_ID%.log
+echo  Status log: %~dp0logs\runs.log
 echo ============================================================
 echo.
 
@@ -79,5 +88,7 @@ if %ERRORLEVEL% neq 0 (
 echo.
 echo ============================================================
 echo  Done! CSV files are ready and verified.
+echo  Full log    : %~dp0logs\run_%DP_RUN_ID%.log
+echo  Status table: %~dp0logs\runs.log
 echo ============================================================
 pause

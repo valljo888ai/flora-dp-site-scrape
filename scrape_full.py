@@ -21,12 +21,11 @@ Available --catalog values:
   hangingplants | shrubs | ivy | floweringplants | bamboopalms | planters
 """
 
-import io
 import sys
 
-if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+import dp_logging
+
+RUN_ID = dp_logging.init("scrape_full")
 
 import argparse
 import asyncio
@@ -458,7 +457,7 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
         except SessionExpiredError as e:
             print(f"\nERROR: {e}")
             await browser.close()
-            sys.exit(1)
+            raise
         print(f"Phase 1 done in {time.time()-t1:.1f}s  —  {len(urls)} products")
         if args.limit and len(urls) > args.limit:
             urls = urls[:args.limit]
@@ -473,7 +472,7 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
             print(f"\nERROR: {e}")
             print("Session expired mid-scrape — re-run login.bat then re-run this catalog.")
             await browser.close()
-            sys.exit(1)
+            raise
         print(f"Phase 2 done in {time.time()-t2:.1f}s")
 
         # ── Phase 3 ───────────────────────────────────────────────────────────
@@ -504,11 +503,19 @@ async def run_catalog_async(catalog_key: str, catalog_config: dict, args) -> Non
 
         await browser.close()
 
-    print_summary(rows, output_csv, time.time() - t_start)
+    elapsed = time.time() - t_start
+    print_summary(rows, output_csv, elapsed)
+    failed = sum(1 for r in rows if r.get("scrape_status") == "failed")
+    return {
+        "products": len(rows),
+        "skipped": len(skipped),
+        "failed": failed,
+        "elapsed": elapsed,
+    }
 
 
-def run_catalog(catalog_key: str, catalog_config: dict, args) -> None:
-    asyncio.run(run_catalog_async(catalog_key, catalog_config, args))
+def run_catalog(catalog_key: str, catalog_config: dict, args) -> dict:
+    return asyncio.run(run_catalog_async(catalog_key, catalog_config, args))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -561,7 +568,20 @@ def main():
 
     session_start = time.time()
     for key in to_run:
-        run_catalog(key, CATALOGS[key], args)
+        try:
+            result = run_catalog(key, CATALOGS[key], args)
+        except SessionExpiredError as e:
+            dp_logging.record_status("scrape_full", "session_expired", catalog=key, error=str(e))
+            sys.exit(1)
+        except Exception as e:
+            print(f"\nERROR scraping catalog {key}: {type(e).__name__}: {e}")
+            print(dp_logging.format_exc())
+            dp_logging.record_status("scrape_full", "failed", catalog=key,
+                                     error=f"{type(e).__name__}: {e}")
+            sys.exit(1)
+        dp_logging.record_status("scrape_full", "ok", catalog=key,
+                                 products=result["products"], skipped=result["skipped"],
+                                 failed=result["failed"], seconds=round(result["elapsed"], 1))
 
     if len(to_run) > 1:
         print(f"\nAll {len(to_run)} catalogs complete in {time.time()-session_start:.1f}s")

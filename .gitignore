@@ -15,3 +15,7 @@ venv/
 
 # Playwright
 .playwright-mcp/
+
+# Execution logs — runtime output, regenerated each run
+logs/
+scrape_run.log

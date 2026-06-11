@@ -18,12 +18,11 @@ Usage:
 
 Requires auth.json to exist (run login.bat or: python login.py).
 """
-import io
 import sys
 
-if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+import dp_logging
+
+dp_logging.init("verify")
 
 import argparse
 import asyncio
@@ -243,6 +242,8 @@ async def main() -> int:
 
     if missing_csvs:
         print(f"FAIL: missing CSV files for: {', '.join(missing_csvs)}")
+        dp_logging.record_status("verify", "failed", reason="missing_csv",
+                                 missing=",".join(missing_csvs))
         return 1
 
     all_rows = [r for rows in csv_data.values() for r in rows]
@@ -328,9 +329,15 @@ async def main() -> int:
             for cat, missing in coverage_failures:
                 print(f"    {cat}: {len(missing)} missing — re-run: run.bat --catalog {cat}")
         print("=" * 60)
+        dp_logging.record_status(
+            "verify", "failed", rows=total,
+            coverage_fail_catalogs=len(coverage_failures),
+            field_issues=len(field_issues), integrity_issues=len(integrity_issues),
+        )
         return 1
     print("  VERIFICATION PASSED — all checks green")
     print("=" * 60)
+    dp_logging.record_status("verify", "passed", rows=total)
     return 0
 
 
@@ -340,4 +347,10 @@ if __name__ == "__main__":
     except RuntimeError as exc:
         print(f"\nERROR: {exc}")
         print("Re-run save_session.py to refresh the session, then retry verify.py.")
+        dp_logging.record_status("verify", "session_expired", error=str(exc))
+        sys.exit(1)
+    except Exception as exc:
+        print(f"\nERROR: {type(exc).__name__}: {exc}")
+        print(dp_logging.format_exc())
+        dp_logging.record_status("verify", "error", error=f"{type(exc).__name__}: {exc}")
         sys.exit(1)
